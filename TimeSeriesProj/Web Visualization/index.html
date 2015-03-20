@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>A3</title>
+        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js" ></script>        
+        <script src="d3.min.js" type="text/javascript"></script>
+
+        <style>
+
+            body {
+                font: 10px sans-serif;
+            }
+
+            .axis path,
+            .axis line {
+                fill: none;
+                stroke: #000;
+                shape-rendering: crispEdges;
+            }
+
+            .x.axis path {
+                /* display: none; */
+            }
+
+            .line {
+                fill: none;
+                stroke: steelblue;
+                stroke-width: 1.5px;
+            }
+
+            .overlay {
+              fill: none;
+              pointer-events: all;
+            }
+            
+            .focus circle {
+              fill: green;
+              stroke: green;
+            }
+
+            #header {
+                font-size: 20px;
+                float: left;
+            }
+
+            svg {
+                position: absolute;
+                top: 50px;
+                left: 25px;
+            }
+        
+            .selection {
+                fill-opacity: 0.1;
+            }
+
+            div.news {
+                font-size: 14px;
+                position: absolute;
+                border: 1px solid;
+                top: 625px;
+                padding:20px;
+                margin-left:50px;
+                margin-right:50px;
+                width: 90%;
+            }
+
+            span#news-query {
+                position: absolute;
+                vertical-align: middle;
+                top: 575px;
+                float: right;
+            }
+
+            #start, #end {
+                width: 80px;
+            }
+
+        </style>
+    </head>
+
+    <body>
+        <div id="title">
+            <h1 id="header">GBPUSD Foreign Exchange data 2007 - 2012</h1>
+        </div>        
+        <br><p></p>
+
+        <svg class="chart"></svg>
+        <span id="news-query">
+            <input type="search" id="search-box" placeholder="search nytimes">
+            <input type="text" id="start" placeholder="YYYYMMDD">
+            <input type="text" id="end" placeholder="YYYYMMDD">
+            <button id="search-button">GO</button> </span>
+        <div class="news">
+        </div>
+
+        <script>
+
+            // Based on mbostock’s block: line chart        
+            var margin = {top: 20, right: 80, bottom: 30, left: 50},
+            width = $(window).width() - margin.left - margin.right,
+            height = 500 - margin.top - margin.bottom;
+
+            var parseDate = d3.time.format("%Y-%m-%d %H:%M:%S").parse;
+
+            var bisectDate = d3.bisector(function(d) { return d.date; }).left,
+            formatValue = d3.format(",.4f"),
+            formatCurrency = function(d) { return "$" + formatValue(d); };
+
+
+            var x = d3.time.scale()
+            .range([0, width]);
+
+            var y = d3.scale.linear()
+            .range([height, 0]);
+
+            var xAxis = d3.svg.axis()
+            .scale(x)
+            .orient("bottom")
+
+            var yAxis = d3.svg.axis()
+            .scale(y)
+            .orient("left");
+
+            var line = d3.svg.line()
+            .x(function(d) { return x(d.date); })
+            .y(function(d) { return y(d.price); });
+
+
+            // Query NYT article search API when search button is clicked
+            $("button#search-button").click(function() {    
+                queryNYT($("#search-box").val(), $("#start").val(), $("#end").val());
+            });
+
+            var BASE_URL = "http://api.nytimes.com/svc/search/v2/articlesearch";
+            var SEARCH_KEY = "552fd6aa1b8665e7281a2e8dcd89a685:1:70003010";
+
+            function queryNYT(query, startDate, endDate) {
+
+                var request = BASE_URL+".json?q="+query
+                +"&fq=source:(\"The New York Times\")"
+                +"&fq=news_desk.contains:(\"Business\" \"World\" \"U.S.\")"
+                +"&begin_date="+startDate+"&end_date="+endDate
+                +"&api-key="+SEARCH_KEY;
+
+                // Send GET request
+                $.get(request, function( data ) {
+                    printResults(data.response, request);
+                });
+
+            }
+
+            function printResults(response, request) {
+
+                var newsBox = $("div.news");
+                newsBox.html("");
+
+                var docs = response.docs;
+                var numDocs = response.meta.hits
+
+                newsBox.append("<h2>Results: </h2><br>");
+                for (var i in docs) {
+                    var doc = docs[i];
+                    console.log(doc.headline.main + " | " + doc.web_url);
+                    newsBox.append("<a class='article' href='" + doc.web_url + "'>" + doc.headline.main + "</a> | " + doc.pub_date.substring(0,10) + "<br><br>" + doc.snippet + "<br><br>");
+                }
+
+            }
+
+            // Draw the line chart and all chart interactions
+            var DATA = "GBPUSD.json";
+            var all_data = [];
+            drawChart();
+
+            function drawChart() {
+
+                var minPrice = Infinity;
+                var maxPrice = -Infinity;
+                loadAndDrawData(DATA);
+
+
+                // Extract from json file
+                function loadAndDrawData(filename, nextFn) {
+
+                    d3.json(filename, function(error, json) {
+                        var sortable_data = [];
+                        // If no data, warn
+                        if (error) return console.warn(error);
+
+                        for (var idx in json) {
+                            d = json[idx];
+
+                            d.date = parseDate(d.date);
+                            d.price = +d.price;
+
+                            minPrice = Math.min(minPrice, d.price);
+                            maxPrice = Math.max(maxPrice, d.price);
+                            sortable_data.push(d);
+                        };
+
+                        window.all_data.push([json, sortable_data]); 
+                        if (typeof nextFn === 'function') {
+                            nextFn();
+                        } else {
+                            draw();
+                            return;
+                        }
+                    });
+
+                }
+
+                // Draw chart
+                function draw() {
+
+                    var d_json = all_data[0][0],
+                    d_data = all_data[0][1];
+                    var hoverData = d_data;
+                    var minDate = d_json[0].date;
+                    var maxDate;
+                    maxDate = d_json[Object.keys(d_data).length - 1].date;
+
+                    // Based on mbostock’s block: line chart (cont.)
+                    x.domain([minDate, maxDate]);
+                    y.domain([minPrice, maxPrice]);
+
+                    svg.append("g")
+                    .attr("class", "x axis")
+                    .attr("transform", "translate(0," + height + ")")
+                    .call(xAxis)
+                    .append("text")
+                    .attr("x", width)
+                    .attr("y", -5)
+                    .style("text-anchor", "end")
+                    .text("Date");
+
+                    svg.append("g")
+                    .attr("class", "y axis")
+                    .call(yAxis)
+                    .append("text")
+                    .attr("transform", "rotate(-90)")
+                    .attr("y", 6)
+                    .attr("dy", ".71em")
+                    .style("text-anchor", "end")
+                    .text("Price ($)");
+
+                    svg.append("path")
+                    .datum(d_data)
+                    .attr("class", "line")
+                    .attr("d", line);
+
+                    // Based on mbostock’s block: X-Value Mouseover
+                    var focus = svg.append("g")
+                    .attr("class", "focus")
+                    .style("display", "none");
+
+                    focus.append("circle")
+                    .attr("r", 4.5);
+
+                    focus.append("text")
+                    .attr("x", 9)
+                    .attr("dy", ".35em");
+
+                    // Based on D3 drag behavior blocks
+                    var dragStartDate,
+                    dragStartX,
+                    dragEndX,
+                    dragEndDate;
+
+                    var drag = d3.behavior.drag()
+                    
+                    .on("dragstart", function(d,i) {
+                        dragStartX = d3.mouse(this)[0];
+                        dragStartDate = x.invert(dragStartX);
+                        console.log(dragStartDate);
+
+                        svg.select("rect.selection").remove();
+
+                        svg.append( "rect")
+                        .attr({
+                            x       : dragStartX,
+                            y       : 0,
+                            width   : 1,
+                            height  : height,
+                            class   : "selection"
+                        })
+                    })
+
+                    .on("drag", function(d,i) {
+
+                        d3.select(".selection")
+                        .attr("width", d3.mouse(this)[0] - dragStartX);
+
+                    })
+
+                    .on("dragend", function(d,i) {
+                        dragEndX = d3.mouse(this)[0];
+                        dragEndDate = x.invert(dragEndX);
+                        console.log(dragEndDate);
+                        queryDateRange(dragStartDate, dragEndDate);
+                        dragStartDate = undefined;
+                        dragStartX = undefined;
+                        dragEndDate = undefined;
+                        dragEndX = undefined; 
+
+                    });
+
+                    // Set the start and end dates for search
+                    function queryDateRange(start, end) {
+
+                        var formatDate = d3.time.format("%Y%m%d");
+                        var fmtd_start = formatDate(start);
+                        var fmtd_end = formatDate(end); 
+
+                        $("input#start").val(fmtd_start);
+                        $("input#end").val(fmtd_end);
+
+                    }
+
+                    // Based on mbostock’s block: X-Value Mouseover (cont.)
+                    svg.append("rect")
+                    .attr("class", "overlay")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .on("mouseover", function() { focus.style("display", null); })
+                    .on("mouseout", function() { focus.style("display", "none"); })
+                    .on("mousemove", mousemove)
+                    .call(drag);
+
+                    function mousemove() {
+                        var x0 = x.invert(d3.mouse(this)[0]),
+                        i = bisectDate(hoverData, x0, 1),
+                        d0 = hoverData[i - 1],
+                        d1 = hoverData[i],
+                        d = x0 - d0.date > d1.date - x0 ? d1 : d0;
+                        focus.attr("transform", "translate(" + x(d.date) + "," + y(d.price) + ")");
+                        focus.select("text").text("" + formatCurrency(d.price) + " --- " + d.date);
+                    }
+
+                }
+
+                $("svg.chart").html("");
+                var svg = d3.select("svg.chart")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+            }
+
+
+
+
+        </script>
+    </body>
+</html>

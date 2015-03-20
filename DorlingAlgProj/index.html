@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Dorling Cartogram on Yelp Data</title>
+<style>
+
+circle {
+  fill: #eee;
+  stroke: #000;
+  stroke-width: 1.5px;
+}
+
+.legend circle {
+  fill: none;
+  stroke: #888;
+}
+
+.legend text {
+  fill: #222;
+  font: 14px sans-serif;
+  text-anchor: middle;
+}
+
+</style>
+<body>
+<h1 style="text-align:center;">Dorling Cartogram of Yelp Dataset</h1>
+<p style="text-align:center;">Zip Codes for Las Vegas: Total business count as area, Average price level as color (Red: Expensive, Green: Cheap)</p>
+<script src="script/d3.v3.min.js"></script>
+<script>
+
+/* [x_min, y_min, x_max, y_max] */
+
+var span = 1.0
+	canvas = [0,0],
+	limitation = [0,0,0,0];
+
+var margin = {top: 100, right: 0, bottom: 100, left: 200},
+    width = 800,
+    height = 800,
+    padding = 3,
+	scale_factor = width/span;
+
+
+function linearProjection(pts) {
+	var newpts = [0,0];
+	// console.log(limitation);
+	newpts[0] = scale_factor * (pts[0] - limitation[0]) + margin.left;
+	newpts[1] = scale_factor * (pts[1] - limitation[1]) + margin.bottom;
+	return newpts;
+};
+
+var rmax = 40.0,
+	rmin = 10.0;
+
+function radius(r) {
+	rad = scale_factor * r
+	return rad;
+};
+
+
+var col = function(v) {
+  if (v < 1.5) return "#008038";
+  if (v < 1.65) return "#A3D396";
+  if (v < 1.8) return "#FDD2AA";
+  if (v < 1.95) return "#F7976B";
+  if (v < 2.1) return "#F26123";
+  if (v < 2.25) return "#E12816";
+  /* else */ return "#B7161E";
+};
+
+// var force = d3.layout.force()
+//     .charge(0)
+//     .gravity(0)
+//     .size([width, height]);
+
+var svg = d3.select("body").append("svg")
+    .attr("width", width + margin.left + margin.right)
+    .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+    // .attr("transform", "translate(" + margin.left + "," + margin.top + ")");	
+	
+d3.json("script/results.json", function(error, data) {
+	d3.json("data/LasVegasData_final.json", function(error, citydata) {
+
+
+	var i = 0;
+	var itr = i.toString();
+	limitation = data['limitation'];
+	canvas = [(limitation[0]+limitation[2])/2 - span/2, (limitation[1]+limitation[3])/2 - span/2];
+	var zipMap = d3.keys(data[itr])
+				.map( function(key) {
+					var point = linearProjection(data[itr][key]);							
+					//console.log(point[0]);
+					//console.log(radius(data["radius"][key]));
+					return {
+						x: point[0], y: point[1],
+						r: radius(data["radius"][key]),						
+						price: citydata[key]['price'],
+						iter: i,
+						key: key
+					};
+				});
+
+	var num_iter = Object.keys(data).length-2;
+	// console.log(num_iter)
+
+	// rmax = d3.max(zipMap, function(d) {
+	// 	console.log(d.r);
+	// 	return d.r;
+	// });
+
+	// rmin = d3.min(zipMap, function(d) {
+	// 	return d.r;
+	// });
+	
+	// force
+	//   .nodes(zipMap)
+	//   .gravity(0)
+	//   .on("tick", tick)
+	//   .start();
+
+	var node = svg.append("g")
+	  .attr("class", "bubble")
+	.selectAll("circle")
+	  .data(zipMap)
+	.enter()
+	  .append("circle")
+		.attr("r", function(d) { return d.r; })
+		.style("fill", function(d) { return col(d.price); });
+
+	var texts = svg.selectAll("text.label")
+				.data(zipMap)
+				.enter().append("text")
+				.attr("class", "label")
+				.attr("fill", "black")
+				.attr("x", function(d) { return d.x; })
+				.attr("y", function(d) { return d.y; })
+				.attr('text-anchor', "middle")
+				.attr('dy', '0.35em')
+				.text(function(d) {  return d.key;  });
+
+	var iterate = setInterval(function() {
+		tick();
+	}, 0);
+
+
+	function tick() {
+	//node.attr("transform", function(d) {
+		//return "translate(" + d.x + "," + d.y + ")"; });
+		node.each(update())
+			.transition()			
+			.attr("cx", function(d) { return d.x; })
+			.attr("cy", function(d) { return d.y; });
+		
+		texts.transition()
+			 .attr("x", function(d) { return d.x; })
+			 .attr("y", function(d) { return d.y; });
+	}
+	
+	function update(k) { return function(d) {
+		if (d.iter < num_iter-1) {
+			i = d.iter + 1;
+		} else {
+			clearInterval(iterate);
+		};
+		console.log(i);
+		var newpts = linearProjection(data[i.toString()][d.key]);
+		d.x = newpts[0];
+		d.y = newpts[1];
+		d.iter = i;
+		//console.log("iteration number:     ",i);
+		};
+	};
+
+	});
+
+});
+// console.log(rmax)
+// console.log(rmin)
+var rscale = d3.scale.log()
+					 .base(1.1)
+ 					 .domain([10,1200])
+            		 .range([Math.floor(rmin), Math.ceil(rmax)]);
+
+function radiusLegend(r) {
+	return rscale(r);
+};
+
+var legend = svg.append("g")
+    .attr("class", "legend")
+    .attr("transform", "translate(" + (width - 80) + "," + (height - 250) + ")")
+  .selectAll("g")
+    // .data([Math.floor(rmin),Math.floor(rmin +(rmax-rmin)/2),Math.ceil(rmax)])
+    .data([50,300,1200])
+  .enter().append("g");
+
+legend.append("circle")
+    .attr("cy", function(d) { return -radiusLegend(d); })
+    .attr("r", function(d) { return radiusLegend(d); });
+
+legend.append("text")
+    .attr("y", function(d) { return -2 * radiusLegend(d); })
+    .attr("dy", "1.3em")
+    .text(d3.format(".2s"));
+
+</script>
